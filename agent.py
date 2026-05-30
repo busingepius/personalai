@@ -5,6 +5,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 from typing import Annotated, TypedDict
 from langgraph.graph import StateGraph, END
+from ddgs import DDGS 
 
 # --- 1. Structured Output Schema ---
 # Defines the shape of every decision the model makes.
@@ -23,7 +24,7 @@ client = instructor.from_openai(
         base_url="http://localhost:52415/v1",
         api_key="exo"  # placeholder — local servers don't validate API keys
     ),
-    mode=instructor.Mode.JSON  # tells instructor to extract structured output from raw JSON
+    mode=instructor.Mode.MD_JSON  # tells instructor to extract structured output from raw JSON
 )
 
 # --- 3. LangGraph State ---
@@ -51,6 +52,7 @@ def call_model(state: State):
         model="mlx-community/gemma-4-31b-it-8bit",
         messages=current_messages, #type: ignore
         response_model=AgentAction, #type: ignore
+        max_retries=2  # <-- ADD THIS: Crash immediately if the JSON is bad
     )
 
     # Record the model's decision in history so future turns have full context
@@ -71,9 +73,15 @@ def call_model(state: State):
 def execute_tool(state: State):
     action = state["action"]
 
-    # Mock tool implementations — replace with real logic as needed
+    # Actual tool implementations — replace with real logic as needed
     if action.tool_name == "search":
-        result = f"Search result for '{action.query}': Sunny, 75°F"
+        with DDGS() as ddgs:
+            results = list(ddgs.text(action.query, max_results=3))
+            if not results:
+                result = "No results found for the query."
+            else:
+                result = "\n".join(f"{r['title']}: {r['body']}" for r in results)
+        result = "\n".join(f"{r['title']}: {r['body']}" for r in results)
     else:
         result = f"Tool '{action.tool_name}' not found."
 
@@ -112,6 +120,6 @@ workflow.add_edge("tools", "agent")
 app = workflow.compile()
 
 # --- 6. Run ---
-final_state = app.invoke({"input": "What is the weather in Tokyo?", "messages": []}) #type: ignore
+final_state = app.invoke({"input": "What is the date today in Tokyo?", "messages": []}) #type: ignore
 print("\n--- Final Output ---")
 print(final_state["final_response"])
